@@ -1,0 +1,16 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
+const js=html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const context=vm.createContext({document:{getElementById:()=>null}});
+vm.runInContext(js.slice(0,js.indexOf('let state=initialState()'))+';globalThis.api={generateMarkdown,validateState,initialState,newBlock};',context);
+const {generateMarkdown:g,validateState,initialState,newBlock:b}=context.api;
+test('セリフの括弧・各出力形式',()=>{assert.equal(g([b('dialogue','「こんにちは」')]),'「こんにちは」');assert.equal(g([b('dialogue','こんにちは')]),'「こんにちは」');assert.equal(g([b('dialogue','会話',{dialogue:'plain'})]),'会話');assert.equal(g([b('dialogue','会話',{dialogue:'bold'})]),'**会話**');});
+test('全装飾・ブロック順・空入力・日本語',()=>{assert.equal(g([b('action','動作'),b('thought','心理'),b('body','  '),b('emphasis','強調',{emphasis:'both'}),b('divider')]),'*動作*\n\n*心理*\n\n***強調***\n\n---');for(const [key,mark] of [['bold','**'],['italic','*'],['both','***'],['strike','~~']])assert.equal(g([b('emphasis','文章',{emphasis:key})]),mark+'文章'+mark);});
+test('改行と空行・CRLF・空ブロック',()=>{assert.equal(g([b('body','\n一行\r\n二行\n\n三行\n'),b('body',''),b('body','次')]),'一行\n二行\n\n三行\n\n次');assert.equal(g([b('action','一\n二')]),'*一*\n*二*');});
+test('記号エスケープと自由入力',()=>{const text='*星* # 見出し [リンク](x) <script> & 「全角」、。';assert.equal(g([b('free',text)]),text);assert.equal(g([b('body',text)],{escape:false}),text);assert.equal(g([b('body','*記号*')]),'\\*記号\\*');});
+test('見出し・リスト・引用',()=>{assert.equal(g([b('heading','章',{level:'3'}),b('list','一\n二'),b('ordered','甲\n乙'),b('quote','引用\n続き')]),'### 章\n\n- 一\n- 二\n\n1. 甲\n2. 乙\n\n> 引用\n> 続き');});
+test('保存状態の往復・未知フィールド排除',()=>{const state=initialState();state.chat[0].text='日本語';state.extra='ignored';state.chat[0].settings.code='ignored';const clean=validateState(JSON.parse(JSON.stringify(state)));assert.equal(clean.chat[0].text,'日本語');assert.equal(clean.extra,undefined);assert.equal(clean.chat[0].settings.code,undefined);assert.equal(clean.version,1);});
+test('不正な保存・インポートデータを拒否',()=>{for(const value of [null,{}, {version:2}, {...initialState(),mode:'evil'}, {...initialState(),chat:[{type:'script',text:'x',settings:{}}]}, {...initialState(),profile:[{type:'heading',text:'x',settings:{level:99}}]}])assert.throws(()=>validateState(value));});
